@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, END
-from state.schema import DueDiligenceState
+from ..state.schema import DueDiligenceState
 from .nodes import (
     init_node,
     research_node,
@@ -67,7 +67,7 @@ async def run_due_diligence(startup_name : str,
                             startup_descrption: str,
                             funding_stage : Optional[str]=None ) -> DueDiligenceState:
     
-    from state.schema import create_initial_state
+    from ..state.schema import create_initial_state
 
     initial_state = create_initial_state(startup_name=startup_name, 
                                          startup_description=startup_descrption,

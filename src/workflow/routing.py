@@ -1,5 +1,5 @@
 from typing import Literal
-from state.schema import DueDiligenceState
+from ..state.schema import DueDiligenceState
 
 def check_init_success(state : DueDiligenceState) -> Literal['success', 'failure']:
     errors = state.get('error', [])
@@ -31,7 +31,7 @@ def check_research_completeness(state : DueDiligenceState) -> Literal['complete'
     if total_count == 0:
         return 'failed'
 
-    success_rate = total_count / success_count
+    success_rate = success_count / total_count
 
     # need 50% to pass:
     if success_rate > 0.5:

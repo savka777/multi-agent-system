@@ -1,13 +1,28 @@
 import asyncio
-from workflow import run_due_diligence
+from .workflow import run_due_diligence
+
 
 async def main():
-   print("Running Multi-Agents")
-   results = await run_due_diligence(startup_name="Vercel", 
-                      startup_descrption="Deployment Made Easy")
+    """Run the due diligence workflow."""
+    print("Starting Due Diligence Workflow...")
+    print("=" * 60)
 
-   print("Final State: ", results.get('current_stage'))
-   print("Errors: ", results.get('error', []))
+    result = await run_due_diligence(
+        startup_name="Stripe",
+        startup_descrption="Online payment processing platform for internet businesses"
+    )
+
+    print("\n" + "=" * 60)
+    print("FINAL RESULTS")
+    print("=" * 60)
+    print(f"Status: {result.get('current_stage')}")
+    print(f"Research outputs: {len(result.get('research_outputs', []))}")
+    print(f"Errors: {len(result.get('errors', []))}")
+
+    # Show research summary
+    for output in result.get("research_outputs", []):
+        status = "OK" if output.get("success") else "FAIL"
+        print(f"  [{status}] {output.get('agent')}")
 
 
 if __name__ == "__main__":

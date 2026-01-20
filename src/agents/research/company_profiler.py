@@ -1,5 +1,5 @@
 from ..base import run_agent, AgentResult, parse_json_from_output
-from ...config import COMPANY_PROFILER
+from ...config.agent_configs import COMPANY_PROFILER
 
 async def run_company_profiler(startup_name: str,startup_description: str) -> AgentResult:
     prompt = f"""Research the following startup...
