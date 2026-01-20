@@ -12,7 +12,7 @@ class StateField(str, Enum):
     ERRORS = "errors"
     RETRY_COUNT = "retry_count"
 
-class Stage(Enum):
+class Stage(str, Enum):
     INIT = "init"
     INIT_COMPLETE = "init_complete"
     RESEARCH_COMPLETE = "research_complete"
@@ -23,7 +23,7 @@ class Stage(Enum):
     PARTIAL = "partial"
     FAILED = "failed"
 
-class AgentName(Enum):
+class AgentName(str, Enum):
       # Research agents (Layer 1)
     COMPANY_PROFILER = "company_profiler"
     MARKET_RESEARCHER = "market_researcher"

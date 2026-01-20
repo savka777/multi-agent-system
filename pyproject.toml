@@ -7,4 +7,6 @@ requires-python = ">=3.14"
 dependencies = [
   "langgraph",
   "claude-agent-sdk",
+  "grandalf>=0.8",
+  "pydantic>=2.12.5",
 ]
