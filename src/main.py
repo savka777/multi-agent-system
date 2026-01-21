@@ -8,8 +8,8 @@ async def main():
     print("=" * 60)
 
     result = await run_due_diligence(
-        startup_name="Stripe",
-        startup_descrption="Online payment processing platform for internet businesses"
+        startup_name="beatvest",
+        startup_descrption="Your app for creating long-term wealth. Whether you're a beginner or already investing, start at the level that is right for you."
     )
 
     print("\n" + "=" * 60)

@@ -1,7 +1,7 @@
 from ..base import run_agent, AgentResult, parse_json_from_output
 from ...config.agent_configs import COMPANY_PROFILER
 
-async def run_company_profiler(startup_name: str,startup_description: str) -> AgentResult:
+async def run_company_profiler(startup_name: str, startup_description: str) -> AgentResult:
     prompt = f"""Research the following startup...
     
     Format your response as valid JSON:
