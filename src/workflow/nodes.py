@@ -11,17 +11,16 @@ from ..agents.research.market_researcher import run_market_researcher
 from ..agents.research.news_monitor import run_news_monitor
 from ..agents.research.team_investigator import run_team_investigator
 
-# from ..agents.analysis.financial_analyst import run_financial_analyst
-# from ..agents.analysis.legal_reviewer import run_legal_reviewer
-# from ..agents.analysis.risk_assessor import run_risk_assessor
-# from ..agents.analysis.tech_evaluator import run_tech_evaluator
+from ..agents.analysis.financial_analyst import run_financial_analyst
+from ..agents.analysis.legal_reviewer import run_legal_reviewer
+from ..agents.analysis.risk_assessor import run_risk_assessor
+from ..agents.analysis.tech_evaluator import run_tech_evaluator
 
 async def init_node(state: DueDiligenceState) -> Dict[str, Any]:
     """Initialize the workflow."""
     print("Running: init_node")
     print(f"  Startup: {state.get('startup_name')}")
     return {"current_stage": "init_complete"}
-
 
 async def research_node(state: DueDiligenceState) -> Dict[str, Any]:
     print("\n" + "=" * 60)
@@ -136,12 +135,12 @@ async def validate_research_node(state: DueDiligenceState) -> Dict[str, Any]:
 async def analysis_node(state: DueDiligenceState) -> Dict[str, Any]:
     """Run analysis agents."""
     print("Running: analysis_node")
-    # tasks = [
-    #     run_financial_analyst,
-    #     run_legal_reviewer,
-    #     run_risk_assesor,
-    #     run_tech_evaluator
-    # ]
+    tasks = [
+        run_financial_analyst,
+        run_legal_reviewer,
+        run_risk_assessor,
+        run_tech_evaluator
+    ]
 
     return {
         "full_report": "Stub report",

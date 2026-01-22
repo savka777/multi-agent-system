@@ -9,4 +9,10 @@ dependencies = [
   "claude-agent-sdk",
   "grandalf>=0.8",
   "pydantic>=2.12.5",
+  "braintrust-langchain>=0.2.0",
+  "langchain-openai>=1.1.7",
+  "python-dotenv>=1.2.1",
+  "braintrust>=0.5.0",
+  "openai>=2.15.0",
+  "anthropic>=0.76.0",
 ]
