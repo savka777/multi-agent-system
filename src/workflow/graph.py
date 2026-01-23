@@ -9,10 +9,21 @@ from .nodes import (
     output_node,
 )
 from .routing import check_init_success, check_research_completeness
-
 from typing import Optional
 
+import os
+from dotenv import load_dotenv
+from braintrust import init_logger
+from braintrust_langchain import BraintrustCallbackHandler, set_global_handler
+
+load_dotenv()
+
 def create_due_diligence_graph() -> StateGraph:
+
+    # brain trust logging trace of langraph
+    init_logger(project='multi-agent-system')
+    handler = BraintrustCallbackHandler()
+    set_global_handler(handler)
 
     workflow = StateGraph(DueDiligenceState)
 

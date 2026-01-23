@@ -1,5 +1,5 @@
 import asyncio
-from .workflow import run_due_diligence
+from src.workflow import run_due_diligence
 
 
 async def main():
