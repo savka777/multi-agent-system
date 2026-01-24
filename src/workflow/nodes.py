@@ -1,7 +1,7 @@
 # Nodes = functions, our graph connects there nodes, in order for agents to 1) perfrom tasks, 2) return outputs
 # and 3) update memory
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 from ..state.schema import DueDiligenceState
 import time, asyncio
 
@@ -132,20 +132,121 @@ async def validate_research_node(state: DueDiligenceState) -> Dict[str, Any]:
         'retry_count' : retry_count
     }
 
-async def analysis_node(state: DueDiligenceState) -> Dict[str, Any]:
-    """Run analysis agents."""
-    print("Running: analysis_node")
-    tasks = [
-        run_financial_analyst,
-        run_legal_reviewer,
-        run_risk_assessor,
-        run_tech_evaluator
-    ]
+def _get_agent_output(outputs: List[Dict], agent_name: str) -> Any:
+    """Extract a specific agent's output from the outputs list."""
+    for output in outputs:
+        if output.get("agent") == agent_name and output.get("success"):
+            return output.get("output")
+    return None
 
+async def analysis_node(state: DueDiligenceState) -> Dict[str, Any]:
+    """
+    Run analysis agents.
+
+    Some will run in parallel, but the risk assessor needs other outputs first.
+    """
+    print("\n" + "=" * 60)
+    print("STAGE 3: ANALYSIS (4 agents)")
+    print("=" * 60)
+
+    startup_name = state["startup_name"]
+    startup_description = state["startup_description"]
+    research_outputs = state.get("research_outputs", [])
+
+    # Extract specific research outputs for analysis
+    company_profile = _get_agent_output(research_outputs, "company_profiler")
+    market_analysis = _get_agent_output(research_outputs, "market_researcher")
+    team_analysis = _get_agent_output(research_outputs, "team_investigator")
+
+    print("  Starting: financial_analyst, tech_evaluator, legal_reviewer (parallel)")
+    start_time = time.time()
+
+    # Run first batch in parallel
+    first_batch = await asyncio.gather(
+        run_financial_analyst(
+            company_profile=company_profile,
+            market_analysis=market_analysis,
+            startup_name=startup_name,
+            startup_description=startup_description
+        ),
+        run_tech_evaluator(
+            startup_name=startup_name,
+            startup_description=startup_description,
+            team_analysis=team_analysis
+        ),
+        run_legal_reviewer(
+            startup_name=startup_name,
+            market_analysis=market_analysis
+        ),
+        return_exceptions=True
+    )
+
+    analysis_outputs = []
+    errors = []
+
+    # Process first batch
+    first_batch_names = ["financial_analyst", "tech_evaluator", "legal_reviewer"]
+    for i, result in enumerate(first_batch):
+        agent_name = first_batch_names[i]
+        if isinstance(result, Exception):
+            errors.append(f"{agent_name}: {str(result)}")
+            analysis_outputs.append({
+                "agent": agent_name, "output": None,
+                "success": False, "error": str(result)
+            })
+            print(f"  FAILED: {agent_name}")
+        elif not result.success:
+            errors.append(f"{agent_name}: {result.error}")
+            analysis_outputs.append({
+                "agent": agent_name, "output": None,
+                "success": False, "error": result.error
+            })
+            print(f"  FAILED: {agent_name}")
+        else:
+            analysis_outputs.append({
+                "agent": agent_name,
+                "output": result.output,
+                "raw_output": result.raw_output,
+                "success": True,
+                "execution_time_ms": result.execution_time_ms
+            })
+            print(f"  DONE: {agent_name} ({result.execution_time_ms/1000:.1f}s)")
+
+    # Now run risk assessor with ALL outputs
+    print("  Starting: risk_assessor (needs other analysis)")
+    risk_result = await run_risk_assessor(
+        research_outputs=research_outputs,
+        analysis_outputs=analysis_outputs,
+        startup_name=startup_name
+    )
+
+    if isinstance(risk_result, Exception) or not risk_result.success:
+        error_msg = str(risk_result) if isinstance(risk_result, Exception) else risk_result.error
+        errors.append(f"risk_assessor: {error_msg}")
+        analysis_outputs.append({
+            "agent": "risk_assessor", "output": None,
+            "success": False, "error": error_msg
+        })
+        print(f"  FAILED: risk_assessor")
+    else:
+        analysis_outputs.append({
+            "agent": "risk_assessor",
+            "output": risk_result.output,
+            "raw_output": risk_result.raw_output,
+            "success": True,
+            "execution_time_ms": risk_result.execution_time_ms
+        })
+        print(f"  DONE: risk_assessor ({risk_result.execution_time_ms/1000:.1f}s)")
+
+    elapsed = time.time() - start_time
+    success_count = sum(1 for r in analysis_outputs if r.get("success"))
+    print(f"\nAnalysis complete: {success_count}/4 agents in {elapsed:.1f}s")
+    
+    # update the state after node has completed... langgraph automatically consumes this.
     return {
-        "full_report": "Stub report",
-        "investment_decision": {"recommendation": "hold"},
-        "current_stage": "synthesis_complete"
+        "analysis_outputs": analysis_outputs,
+        "errors": errors,
+        "current_stage": "analysis_complete"
     }
 
 async def synthesis_node(state: DueDiligenceState) -> Dict[str, Any]:
