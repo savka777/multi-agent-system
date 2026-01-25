@@ -2,21 +2,23 @@ from ..base import run_agent, AgentResult, parse_json_from_output
 from ...config.agent_configs import NEWS_MONITOR
 
 
-async def run_news_monitor(
-    startup_name: str
-) -> AgentResult:
-    """Find recent news and press coverage."""
+async def run_news_monitor(startup_name: str) -> AgentResult:
+    """
+    Find recent news only.
+    ONE task: Get latest funding/product news.
+    """
+    prompt = f"""Find recent news about {startup_name}.
 
-    prompt = f"""Find recent news about: {startup_name}
+YOUR TASK: Find 3-5 recent news items. Use 1-2 web searches maximum.
 
-Search for:
-1. Recent press releases
-2. News articles and media coverage
-3. Funding announcements
-4. Product launches or major updates
-5. Any controversies or concerns
-
-Output as JSON: {{...}}
+Return JSON:
+{{
+    "recent_news": [
+        {{"date": "2024-01", "headline": "...", "type": "funding/product/partnership"}}
+    ],
+    "latest_funding": {{"amount": "$100M", "round": "Series D", "date": "2024"}},
+    "sentiment": "positive/neutral/negative"
+}}
 """
 
     result = await run_agent(
@@ -25,7 +27,7 @@ Output as JSON: {{...}}
         tools=NEWS_MONITOR.tools,
         model=NEWS_MONITOR.model,
         system_prompt=NEWS_MONITOR.system_prompt,
-        timeout_seconds=NEWS_MONITOR.timeout_seconds
+        timeout_seconds=NEWS_MONITOR.timeout_seconds,
     )
 
     if result.success and result.raw_output:

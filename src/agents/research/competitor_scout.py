@@ -6,20 +6,26 @@ async def run_competitor_scout(
     startup_name: str,
     startup_description: str
 ) -> AgentResult:
-    """Research competitors for the startup."""
+    """
+    Find top competitors only.
+    ONE task: Identify 3-5 main competitors.
+    """
+    prompt = f"""Find competitors for {startup_name}.
 
-    prompt = f"""Identify and analyze competitors for:
+Company description: {startup_description}
 
-Startup: {startup_name}
-Description: {startup_description}
+YOUR TASK: Identify top 3-5 competitors. Use 1-2 web searches maximum.
 
-Research and report:
-1. Direct competitors (same solution, same market)
-2. Indirect competitors (different solution, same problem)
-3. Each competitor's strengths and weaknesses
-4. Market positioning comparison
-
-Output as JSON: {{...}}
+Return JSON:
+{{
+    "competitors": [
+        {{"name": "Square", "type": "direct", "strength": "SMB focus"}},
+        {{"name": "PayPal", "type": "direct", "strength": "Consumer brand"}},
+        {{"name": "Adyen", "type": "direct", "strength": "Enterprise"}}
+    ],
+    "market_leader": "Stripe or competitor name",
+    "competitive_landscape": "fragmented/consolidated/emerging"
+}}
 """
 
     result = await run_agent(
@@ -28,7 +34,7 @@ Output as JSON: {{...}}
         tools=COMPETITOR_SCOUT.tools,
         model=COMPETITOR_SCOUT.model,
         system_prompt=COMPETITOR_SCOUT.system_prompt,
-        timeout_seconds=COMPETITOR_SCOUT.timeout_seconds
+        timeout_seconds=COMPETITOR_SCOUT.timeout_seconds,
     )
 
     if result.success and result.raw_output:

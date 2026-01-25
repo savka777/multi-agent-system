@@ -1,16 +1,28 @@
 from ..base import run_agent, AgentResult, parse_json_from_output
 from ...config.agent_configs import COMPANY_PROFILER
 
+
 async def run_company_profiler(startup_name: str, startup_description: str) -> AgentResult:
-    prompt = f"""Research the following startup...
-    
-    Format your response as valid JSON:
-    {{
-        "name": "{startup_name}",
-        "founded": "year or null",
-        ...
-    }}
     """
+    Research basic company information.
+    ONE task: Find founding year, headquarters, employee count, and business model.
+    """
+    prompt = f"""Research {startup_name}.
+
+Company description: {startup_description}
+
+YOUR TASK: Find basic company facts. Use 1-2 web searches maximum.
+
+Return JSON:
+{{
+    "name": "{startup_name}",
+    "founded_year": 2010,
+    "headquarters": "City, Country",
+    "employee_count": "1000-5000",
+    "business_model": "B2B SaaS payments infrastructure",
+    "key_products": ["Payments", "Billing", "Connect"]
+}}
+"""
 
     result = await run_agent(
         agent_name=COMPANY_PROFILER.name,
@@ -18,10 +30,10 @@ async def run_company_profiler(startup_name: str, startup_description: str) -> A
         tools=COMPANY_PROFILER.tools,
         model=COMPANY_PROFILER.model,
         system_prompt=COMPANY_PROFILER.system_prompt,
-        timeout_seconds=COMPANY_PROFILER.timeout_seconds
-)
+        timeout_seconds=COMPANY_PROFILER.timeout_seconds,
+    )
 
-    if result.success == True and result.raw_output:
+    if result.success and result.raw_output:
         parsed = parse_json_from_output(result.raw_output)
         if parsed:
             result.output = parsed

@@ -6,20 +6,25 @@ async def run_market_researcher(
     startup_name: str,
     startup_description: str
 ) -> AgentResult:
-    """Research market opportunity for the startup."""
+    """
+    Research market size only.
+    ONE task: Find TAM/SAM/SOM and growth rate.
+    """
+    prompt = f"""Research market size for {startup_name}.
 
-    prompt = f"""Analyze the market opportunity for:
+Company description: {startup_description}
 
-Startup: {startup_name}
-Description: {startup_description}
+YOUR TASK: Find market size numbers. Use 1-2 web searches maximum.
 
-Research and report:
-1. Target market definition
-2. TAM, SAM, SOM
-3. Growth rate and trends
-4. Market timing
-
-Output as JSON: {{...}}
+Return JSON:
+{{
+    "target_market": "Online payments processing",
+    "tam_billions": 100,
+    "sam_billions": 40,
+    "som_billions": 5,
+    "growth_rate_percent": 12,
+    "source": "where you found this data"
+}}
 """
 
     result = await run_agent(
@@ -28,7 +33,7 @@ Output as JSON: {{...}}
         tools=MARKET_RESEARCHER.tools,
         model=MARKET_RESEARCHER.model,
         system_prompt=MARKET_RESEARCHER.system_prompt,
-        timeout_seconds=MARKET_RESEARCHER.timeout_seconds
+        timeout_seconds=MARKET_RESEARCHER.timeout_seconds,
     )
 
     if result.success and result.raw_output:

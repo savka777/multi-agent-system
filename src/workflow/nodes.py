@@ -16,6 +16,10 @@ from ..agents.analysis.legal_reviewer import run_legal_reviewer
 from ..agents.analysis.risk_assessor import run_risk_assessor
 from ..agents.analysis.tech_evaluator import run_tech_evaluator
 
+
+from ..agents.synthesis.report_generator import run_report_generator
+from ..agents.synthesis.decision_agent import run_decision_agent
+
 async def init_node(state: DueDiligenceState) -> Dict[str, Any]:
     """Initialize the workflow."""
     print("Running: init_node")
@@ -23,57 +27,75 @@ async def init_node(state: DueDiligenceState) -> Dict[str, Any]:
     return {"current_stage": "init_complete"}
 
 async def research_node(state: DueDiligenceState) -> Dict[str, Any]:
-    print("\n" + "=" * 60)
-    print("STAGE 2: RESEARCH (5 agents running in parallel)")
-    print("=" * 60)
+    """
+    Run research agents with:
+    - Semaphore limiting (max 2 concurrent to avoid rate limits)
+    - Targeted retry (only run failed agents on retry)
+    """
+    # Check if this is a retry - only run failed agents
+    failed_agents = state.get('failed_research_agents', [])
+    existing_outputs = state.get('research_outputs', [])
 
-    startup_name = state['startup_name']
-    startup_description = state['startup_description']
+    # Map agent names to their runner functions
+    agent_runners = {
+        "company_profiler": lambda: run_company_profiler(state['startup_name'], state['startup_description']),
+        "market_researcher": lambda: run_market_researcher(state['startup_name'], state['startup_description']),
+        "competitor_scout": lambda: run_competitor_scout(state['startup_name'], state['startup_description']),
+        "team_investigator": lambda: run_team_investigator(state['startup_name']),
+        "news_monitor": lambda: run_news_monitor(state['startup_name']),
+    }
 
-    agent_names = [
-        "company_profiler",
-        "market_researcher",
-        "competitor_scout",
-        "team_investigator",
-        "news_monitor"
-    ]
+    all_agents = list(agent_runners.keys())
 
-    for name in agent_names:
-        print(f"  Starting: {name}")
+    # Determine which agents to run
+    if failed_agents:
+        agents_to_run = failed_agents
+        print("\n" + "=" * 60)
+        print(f"STAGE 2: RESEARCH (RETRY - {len(agents_to_run)} failed agents)")
+        print("=" * 60)
+    else:
+        agents_to_run = all_agents
+        print("\n" + "=" * 60)
+        print(f"STAGE 2: RESEARCH ({len(agents_to_run)} agents, max 2 concurrent)")
+        print("=" * 60)
+
+    for name in agents_to_run:
+        print(f"  Queued: {name}")
 
     start_time = time.time()
 
-    tasks = [
-        run_company_profiler(startup_name, startup_description),
-        run_market_researcher(startup_name, startup_description),
-        run_competitor_scout(startup_name, startup_description),
-        run_team_investigator(startup_name),
-        run_news_monitor(startup_name),
-    ]
+    # Semaphore limits concurrent execution to avoid rate limits
+    semaphore = asyncio.Semaphore(2)
 
-    results = await asyncio.gather(*tasks, return_exceptions=True) # graceful degradation
-    
-    research_outputs = []
+    async def run_with_limit(agent_name: str):
+        async with semaphore:
+            print(f"  RUNNING: {agent_name}")
+            return await agent_runners[agent_name]()
+
+    # Run only the agents we need
+    tasks = [run_with_limit(name) for name in agents_to_run]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Start with existing successful outputs (from previous run)
+    research_outputs = [o for o in existing_outputs if o.get('success')]
     errors = []
+    new_failed_agents = []
 
     for i, result in enumerate(results):
-        agent_name = agent_names[i]
+        agent_name = agents_to_run[i]
 
-        # handling runtime excpetions:
-        if isinstance(result, Exception): 
-            errors.append(f"{agent_name}: {str(result)}") # keep track of errors
-            # keep track of state and the last errors:
+        if isinstance(result, Exception):
+            errors.append(f"{agent_name}: {str(result)}")
             research_outputs.append({
                 "agent": agent_name,
                 "output": None,
                 "success": False,
                 "error": str(result)
             })
+            new_failed_agents.append(agent_name)
             print(f"  FAILED: {agent_name} - {str(result)[:50]}")
 
-        # handling the agent not succeeding: 
         elif not result.success:
-            # Agent returned but reported failure
             errors.append(f"{agent_name}: {result.error}")
             research_outputs.append({
                 "agent": agent_name,
@@ -81,11 +103,10 @@ async def research_node(state: DueDiligenceState) -> Dict[str, Any]:
                 "success": False,
                 "error": result.error
             })
-
+            new_failed_agents.append(agent_name)
             print(f"  FAILED: {agent_name} - {result.error[:50] if result.error else 'Unknown'}")
 
         else:
-            # Success! Update state
             research_outputs.append({
                 "agent": agent_name,
                 "output": result.output,
@@ -95,16 +116,22 @@ async def research_node(state: DueDiligenceState) -> Dict[str, Any]:
             })
             print(f"  DONE: {agent_name} ({result.execution_time_ms/1000:.1f}s)")
 
-    elapsed = time.time() - start_time
-    success_count = sum(1 for results in research_outputs if results.get("success"))
-    # print overally success inside the research node:
-    print(f"\nResearch complete: {success_count}/5 agents in {elapsed:.1f}s")
+        # Debug: Show if we got partial output even on failure
+        if not result.success and result.raw_output:
+            print(f"    (Has partial output: {len(result.raw_output)} chars)")
 
-    # agents are done, return their outputs, errors, and update the curent state and which state we are in:
-    print(research_outputs)
+    elapsed = time.time() - start_time
+    success_count = sum(1 for r in research_outputs if r.get("success"))
+    total_count = len(all_agents)
+
+    print(f"\nResearch complete: {success_count}/{total_count} agents in {elapsed:.1f}s")
+    if new_failed_agents:
+        print(f"  Failed agents: {', '.join(new_failed_agents)}")
+
     return {
         "research_outputs": research_outputs,
         "errors": errors,
+        "failed_research_agents": new_failed_agents,
         "current_stage": "research_complete"
     }
 
@@ -250,16 +277,95 @@ async def analysis_node(state: DueDiligenceState) -> Dict[str, Any]:
     }
 
 async def synthesis_node(state: DueDiligenceState) -> Dict[str, Any]:
-    """Run synthesis agents to generate report and decision."""
-    print("Running: synthesis_node")
+    """
+    Run synthesis agents to generate final report and decision.
+    Report generator runs first, then decision agent uses the report.
+    """
+    print("\n" + "=" * 60)
+    print("STAGE 4: SYNTHESIS (2 agents)")
+    print("=" * 60)
+
+    startup_name = state["startup_name"]
+    startup_description = state["startup_description"]
+    research_outputs = state.get("research_outputs", [])
+    analysis_outputs = state.get("analysis_outputs", [])
+    errors = []
+
+    start_time = time.time()
+
+    # Run report generator first
+    print("  Starting: report_generator")
+    report_result = await run_report_generator(
+        startup_name=startup_name,
+        startup_description=startup_description,
+        research_outputs=research_outputs,
+        analysis_outputs=analysis_outputs
+    )
+
+    full_report = None
+    if isinstance(report_result, Exception) or not report_result.success:
+        error_msg = str(report_result) if isinstance(report_result, Exception) else report_result.error
+        errors.append(f"report_generator: {error_msg}")
+        print(f"  FAILED: report_generator")
+    else:
+        full_report = report_result.output or report_result.raw_output
+        print(f"  DONE: report_generator ({report_result.execution_time_ms/1000:.1f}s)")
+
+    # Run decision agent with the report
+    print("  Starting: decision_agent")
+    risk_assessment = _get_agent_output(analysis_outputs, "risk_assessor")
+
+    decision_result = await run_decision_agent(
+        startup_name=startup_name,
+        full_report=full_report[:4000] if full_report else "",
+        risk_assessment=risk_assessment,
+        research_outputs=research_outputs,
+        analysis_outputs=analysis_outputs
+    )
+
+    investment_decision = None
+    if isinstance(decision_result, Exception) or not decision_result.success:
+        error_msg = str(decision_result) if isinstance(decision_result, Exception) else decision_result.error
+        errors.append(f"decision_agent: {error_msg}")
+        print(f"  FAILED: decision_agent")
+    else:
+        investment_decision = decision_result.output
+        print(f"  DONE: decision_agent ({decision_result.execution_time_ms/1000:.1f}s)")
+
+    elapsed = time.time() - start_time
+    success_count = (1 if full_report else 0) + (1 if investment_decision else 0)
+    print(f"\nSynthesis complete: {success_count}/2 agents in {elapsed:.1f}s")
+
     return {
-        "full_report": "Stub report",
-        "investment_decision": {"recommendation": "hold"},
+        "full_report": full_report,
+        "investment_decision": investment_decision,
+        "errors": errors,
         "current_stage": "synthesis_complete"
     }
 
 async def output_node(state: DueDiligenceState) -> Dict[str, Any]:
-    """Finalize output."""
-    print("Running: output_node")
-    print("  Workflow complete!")
-    return {"current_stage": "complete"}
+    print("\n" + "=" * 60)
+    print("STAGE 5: OUTPUT")
+    print("=" * 60)
+
+    errors = state.get("errors", [])
+    full_report = state.get("full_report")
+    investment_decision = state.get("investment_decision")
+
+    # Determine final status
+    if full_report and investment_decision:
+        status = "complete"
+        print("Workflow completed successfully!")
+    elif full_report or investment_decision:
+        status = "partial"
+        print("Workflow completed with partial results")
+    else:
+        status = "failed"
+        print("Workflow failed")
+
+    if errors:
+        print(f"Total errors encountered: {len(errors)}")
+
+    return {
+        "current_stage": status
+    }
