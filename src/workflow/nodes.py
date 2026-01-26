@@ -1,9 +1,12 @@
 # Nodes = functions, our graph connects there nodes, in order for agents to 1) perfrom tasks, 2) return outputs
 # and 3) update memory
 
+import logging
 from typing import Dict, Any, List
 from ..state.schema import DueDiligenceState
 import time, asyncio
+
+logger = logging.getLogger('workflow.nodes')
 
 from ..agents.research.company_profiler import run_company_profiler
 from ..agents.research.competitor_scout import run_competitor_scout
@@ -85,26 +88,35 @@ async def research_node(state: DueDiligenceState) -> Dict[str, Any]:
         agent_name = agents_to_run[i]
 
         if isinstance(result, Exception):
-            errors.append(f"{agent_name}: {str(result)}")
+            error_msg = str(result)
+            errors.append(f"{agent_name}: {error_msg}")
             research_outputs.append({
                 "agent": agent_name,
                 "output": None,
                 "success": False,
-                "error": str(result)
+                "error": error_msg,
+                "error_type": type(result).__name__
             })
             new_failed_agents.append(agent_name)
-            print(f"  FAILED: {agent_name} - {str(result)[:50]}")
+            logger.error(f"[{agent_name}] Exception: {type(result).__name__}: {error_msg}")
 
         elif not result.success:
-            errors.append(f"{agent_name}: {result.error}")
+            error_msg = result.error or "Unknown error"
+            error_type = getattr(result, 'error_type', None)
+            traceback_info = getattr(result, 'error_traceback', None)
+            errors.append(f"{agent_name}: {error_msg}")
             research_outputs.append({
                 "agent": agent_name,
                 "output": None,
                 "success": False,
-                "error": result.error
+                "error": error_msg,
+                "error_type": error_type,
+                "error_traceback": traceback_info
             })
             new_failed_agents.append(agent_name)
-            print(f"  FAILED: {agent_name} - {result.error[:50] if result.error else 'Unknown'}")
+            logger.error(f"[{agent_name}] Failed: {error_type or 'Error'}: {error_msg}")
+            if traceback_info:
+                logger.debug(f"[{agent_name}] Traceback:\n{traceback_info}")
 
         else:
             research_outputs.append({
@@ -117,8 +129,9 @@ async def research_node(state: DueDiligenceState) -> Dict[str, Any]:
             print(f"  DONE: {agent_name} ({result.execution_time_ms/1000:.1f}s)")
 
         # Debug: Show if we got partial output even on failure
-        if not result.success and result.raw_output:
-            print(f"    (Has partial output: {len(result.raw_output)} chars)")
+        if not result.success and hasattr(result, 'raw_output') and result.raw_output:
+            logger.info(f"[{agent_name}] Has partial output: {len(result.raw_output)} chars")
+            logger.debug(f"[{agent_name}] Partial output preview: {result.raw_output[:500]}")
 
     elapsed = time.time() - start_time
     success_count = sum(1 for r in research_outputs if r.get("success"))
@@ -216,19 +229,27 @@ async def analysis_node(state: DueDiligenceState) -> Dict[str, Any]:
     for i, result in enumerate(first_batch):
         agent_name = first_batch_names[i]
         if isinstance(result, Exception):
-            errors.append(f"{agent_name}: {str(result)}")
+            error_msg = str(result)
+            errors.append(f"{agent_name}: {error_msg}")
             analysis_outputs.append({
                 "agent": agent_name, "output": None,
-                "success": False, "error": str(result)
+                "success": False, "error": error_msg,
+                "error_type": type(result).__name__
             })
-            print(f"  FAILED: {agent_name}")
+            logger.error(f"[{agent_name}] Exception: {type(result).__name__}: {error_msg}")
         elif not result.success:
-            errors.append(f"{agent_name}: {result.error}")
+            error_msg = result.error or "Unknown error"
+            error_type = getattr(result, 'error_type', None)
+            traceback_info = getattr(result, 'error_traceback', None)
+            errors.append(f"{agent_name}: {error_msg}")
             analysis_outputs.append({
                 "agent": agent_name, "output": None,
-                "success": False, "error": result.error
+                "success": False, "error": error_msg,
+                "error_type": error_type
             })
-            print(f"  FAILED: {agent_name}")
+            logger.error(f"[{agent_name}] Failed: {error_type or 'Error'}: {error_msg}")
+            if traceback_info:
+                logger.debug(f"[{agent_name}] Traceback:\n{traceback_info}")
         else:
             analysis_outputs.append({
                 "agent": agent_name,
@@ -248,13 +269,19 @@ async def analysis_node(state: DueDiligenceState) -> Dict[str, Any]:
     )
 
     if isinstance(risk_result, Exception) or not risk_result.success:
-        error_msg = str(risk_result) if isinstance(risk_result, Exception) else risk_result.error
+        if isinstance(risk_result, Exception):
+            error_msg = str(risk_result)
+            error_type = type(risk_result).__name__
+        else:
+            error_msg = risk_result.error or "Unknown error"
+            error_type = getattr(risk_result, 'error_type', None)
         errors.append(f"risk_assessor: {error_msg}")
         analysis_outputs.append({
             "agent": "risk_assessor", "output": None,
-            "success": False, "error": error_msg
+            "success": False, "error": error_msg,
+            "error_type": error_type
         })
-        print(f"  FAILED: risk_assessor")
+        logger.error(f"[risk_assessor] Failed: {error_type or 'Error'}: {error_msg}")
     else:
         analysis_outputs.append({
             "agent": "risk_assessor",
@@ -304,9 +331,14 @@ async def synthesis_node(state: DueDiligenceState) -> Dict[str, Any]:
 
     full_report = None
     if isinstance(report_result, Exception) or not report_result.success:
-        error_msg = str(report_result) if isinstance(report_result, Exception) else report_result.error
+        if isinstance(report_result, Exception):
+            error_msg = str(report_result)
+            error_type = type(report_result).__name__
+        else:
+            error_msg = report_result.error or "Unknown error"
+            error_type = getattr(report_result, 'error_type', None)
         errors.append(f"report_generator: {error_msg}")
-        print(f"  FAILED: report_generator")
+        logger.error(f"[report_generator] Failed: {error_type or 'Error'}: {error_msg}")
     else:
         full_report = report_result.output or report_result.raw_output
         print(f"  DONE: report_generator ({report_result.execution_time_ms/1000:.1f}s)")
@@ -325,9 +357,14 @@ async def synthesis_node(state: DueDiligenceState) -> Dict[str, Any]:
 
     investment_decision = None
     if isinstance(decision_result, Exception) or not decision_result.success:
-        error_msg = str(decision_result) if isinstance(decision_result, Exception) else decision_result.error
+        if isinstance(decision_result, Exception):
+            error_msg = str(decision_result)
+            error_type = type(decision_result).__name__
+        else:
+            error_msg = decision_result.error or "Unknown error"
+            error_type = getattr(decision_result, 'error_type', None)
         errors.append(f"decision_agent: {error_msg}")
-        print(f"  FAILED: decision_agent")
+        logger.error(f"[decision_agent] Failed: {error_type or 'Error'}: {error_msg}")
     else:
         investment_decision = decision_result.output
         print(f"  DONE: decision_agent ({decision_result.execution_time_ms/1000:.1f}s)")

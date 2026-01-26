@@ -49,9 +49,12 @@ Format your response as valid JSON:
     )
 
     if result.success and result.raw_output:
-        parsed = parse_json_from_output(result.raw_output)
+        parsed = parse_json_from_output(result.raw_output, agent_name=result.agent_name)
         if parsed:
             result.output = parsed
+        else:
+            result.success = False
+            result.error = "JSON parse failed: could not extract structured output"
 
     return result
 

@@ -1,11 +1,22 @@
 import asyncio
 import time
 import json
+import traceback
+import logging
+import sys
 from typing import List, Optional, Any
 from pydantic import BaseModel
 from dataclasses import dataclass, field
 
 from ..config.settings import get_model_id
+
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger('agent')
 
 
 @dataclass
@@ -54,6 +65,9 @@ class AgentResult(BaseModel):
     tokens_input: int = 0
     tokens_output: int = 0
     timeout_context: Optional[str] = None  # What was happening when it timed out
+    # Enhanced error diagnostics
+    error_type: Optional[str] = None  # Exception class name
+    error_traceback: Optional[str] = None  # Full traceback for debugging
 
 
 async def run_agent(
@@ -70,6 +84,9 @@ async def run_agent(
     # Track state OUTSIDE execute() so we have it on timeout
     trace = ExecutionTrace()
 
+    # Capture stderr from CLI subprocess - defined outside try so it survives exceptions
+    stderr_lines: List[str] = []
+
     try:
         from claude_agent_sdk import (
             query,
@@ -80,12 +97,23 @@ async def run_agent(
             ToolUseBlock
         )
 
+        # Callback to capture stderr from the CLI subprocess
+        def stderr_callback(line: str):
+            stderr_lines.append(line)
+            # Also log immediately so we see errors in real-time
+            if "error" in line.lower() or "exception" in line.lower() or "traceback" in line.lower():
+                logger.error(f"[{agent_name}] CLI stderr: {line}")
+            else:
+                logger.debug(f"[{agent_name}] CLI stderr: {line}")
+
         options = ClaudeAgentOptions(
             model=model_id,
             allowed_tools=tools if tools else [],
             permission_mode="bypassPermissions",
             system_prompt=system_prompt,
-            cwd="/tmp"
+            cwd="/tmp",
+            stderr=stderr_callback,  # Capture actual stderr from CLI
+            extra_args={"debug-to-stderr": None},  # Enable CLI debug mode
         )
 
         async def execute():
@@ -95,7 +123,7 @@ async def run_agent(
                 trace.log_turn(message_type, elapsed)
 
                 # Log every turn
-                print(f"  [{agent_name}] t={elapsed:.1f}s turn={trace.turns} {message_type}")
+                logger.info(f"[{agent_name}] t={elapsed:.1f}s turn={trace.turns} {message_type}")
 
                 if isinstance(message, AssistantMessage):
                     # Extract token usage if available
@@ -111,12 +139,12 @@ async def run_agent(
                         elif isinstance(block, ToolUseBlock):
                             tool_input = getattr(block, 'input', {})
                             trace.log_tool(block.name, tool_input, elapsed)
-                            print(f"    -> Tool: {block.name}")
+                            logger.debug(f"[{agent_name}] Tool: {block.name}")
                             # Log what's being searched/fetched
                             if 'query' in tool_input:
-                                print(f"       Query: {tool_input['query'][:80]}")
+                                logger.debug(f"[{agent_name}]   Query: {tool_input['query'][:80]}")
                             elif 'url' in tool_input:
-                                print(f"       URL: {tool_input['url'][:80]}")
+                                logger.debug(f"[{agent_name}]   URL: {tool_input['url'][:80]}")
 
                 elif isinstance(message, ResultMessage):
                     # Extract final token usage if available
@@ -132,8 +160,10 @@ async def run_agent(
         await asyncio.wait_for(execute(), timeout=timeout_seconds)
 
         elapsed_ms = int((time.time() - start_time) * 1000)
-        print(f"  [{agent_name}] COMPLETE: {trace.turns} turns, {len(trace.tool_calls)} tools, "
-              f"{trace.tokens_input}+{trace.tokens_output} tokens")
+        logger.info(
+            f"[{agent_name}] COMPLETE: {trace.turns} turns, {len(trace.tool_calls)} tools, "
+            f"{trace.tokens_input}+{trace.tokens_output} tokens"
+        )
 
         return AgentResult(
             success=True,
@@ -151,7 +181,7 @@ async def run_agent(
     except asyncio.TimeoutError:
         elapsed_ms = int((time.time() - start_time) * 1000)
         timeout_context = trace.timeout_summary()
-        print(f"  [{agent_name}] TIMEOUT: {timeout_context}")
+        logger.warning(f"[{agent_name}] TIMEOUT: {timeout_context}")
 
         return AgentResult(
             success=False,
@@ -169,11 +199,29 @@ async def run_agent(
 
     except Exception as e:
         elapsed_ms = int((time.time() - start_time) * 1000)
+        exc_type = type(e).__name__
+        exc_traceback = traceback.format_exc()
+
+        # Include captured stderr in error message
+        stderr_output = "\n".join(stderr_lines) if stderr_lines else "No stderr captured"
+        full_error = f"{exc_type}: {str(e)}"
+        if stderr_lines:
+            full_error += f"\n\nCLI stderr:\n{stderr_output}"
+
+        # Log full error details
+        logger.error(
+            f"[{agent_name}] FAILED: {exc_type}: {str(e)}\n"
+            f"CLI stderr ({len(stderr_lines)} lines):\n{stderr_output}\n"
+            f"Traceback:\n{exc_traceback}"
+        )
+
         return AgentResult(
             success=False,
             output=None,
             raw_output=trace.partial_output if trace.partial_output else None,
-            error=str(e),
+            error=full_error,
+            error_type=exc_type,
+            error_traceback=exc_traceback,
             agent_name=agent_name,
             execution_time_ms=elapsed_ms,
             turns=trace.turns,
@@ -183,33 +231,53 @@ async def run_agent(
         )
     
 
-def parse_json_from_output(output: str) -> Optional[dict]:
+def parse_json_from_output(output: str, agent_name: str = "unknown") -> Optional[dict]:
+    """
+    Parse JSON from agent output with detailed error logging.
+
+    Tries three strategies:
+    1. Direct JSON parse
+    2. Extract from markdown code blocks
+    3. Find JSON object in text
+
+    Returns None and logs warnings if all strategies fail.
+    """
     if not output:
+        logger.warning(f"[{agent_name}] JSON parse failed: empty output")
         return None
 
-    # Try direct JSON parse
+    errors = []  # Collect all parsing errors for debugging
+
+    # Strategy 1: Try direct JSON parse
     try:
         return json.loads(output)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        errors.append(f"Direct parse: {e.msg} at position {e.pos}")
 
-    # Try to extract from markdown code block
+    # Strategy 2: Try to extract from markdown code block
     import re
     json_pattern = r'```(?:json)?\s*([\s\S]*?)```'
     matches = re.findall(json_pattern, output)
-    for match in matches:
+    for i, match in enumerate(matches):
         try:
             return json.loads(match.strip())
-        except json.JSONDecodeError:
-            continue
+        except json.JSONDecodeError as e:
+            errors.append(f"Code block {i}: {e.msg} at position {e.pos}")
 
-    # Try to find JSON object in text
+    # Strategy 3: Try to find JSON object in text
     start_idx = output.find('{')
     end_idx = output.rfind('}')
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
         try:
             return json.loads(output[start_idx:end_idx + 1])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            errors.append(f"Extracted object: {e.msg} at position {e.pos}")
 
+    # All strategies failed - log details
+    output_preview = output[:200] + "..." if len(output) > 200 else output
+    logger.warning(
+        f"[{agent_name}] JSON parse failed after 3 strategies:\n"
+        f"  Errors: {errors}\n"
+        f"  Output preview: {output_preview}"
+    )
     return None

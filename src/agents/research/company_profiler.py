@@ -34,8 +34,12 @@ Return JSON:
     )
 
     if result.success and result.raw_output:
-        parsed = parse_json_from_output(result.raw_output)
+        parsed = parse_json_from_output(result.raw_output, agent_name=result.agent_name)
         if parsed:
             result.output = parsed
+        else:
+            # JSON parse failed despite successful execution - mark as failed
+            result.success = False
+            result.error = "JSON parse failed: could not extract structured output"
 
     return result

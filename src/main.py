@@ -7,9 +7,19 @@ a multi-agent AI system built with LangGraph and Claude.
 
 import asyncio
 import json
+import sys
+import logging
 from datetime import datetime
 
 from src.workflow import run_due_diligence
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger('main')
 
 
 def print_header():
@@ -118,16 +128,32 @@ async def main():
     else:
         print("  No report generated")
 
-    # Errors (if any)
+    # Errors (if any) - show FULL error details, no truncation
     if error_count > 0:
         print_section("ERRORS ENCOUNTERED")
-        for error in result.get("errors", [])[:5]:
-            print(f"  * {error[:80]}")
+        for i, error in enumerate(result.get("errors", []), 1):
+            print(f"\n  [{i}] {error}")  # Full error, no truncation
+            # Also log to file for post-mortem
+            logger.error(f"Workflow error: {error}")
 
     print("\n" + "=" * 70)
     print(f"  Completed: {datetime.now().strftime('%H:%M:%S')}")
     print("=" * 70 + "\n")
 
+    # Return error count for exit code handling
+    return error_count
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        error_count = asyncio.run(main())
+        if error_count > 0:
+            logger.error(f"Workflow completed with {error_count} errors")
+            sys.exit(1)
+        sys.exit(0)
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        logger.critical(f"Fatal error: {type(e).__name__}: {e}", exc_info=True)
+        sys.exit(1)
