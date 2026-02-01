@@ -42,6 +42,13 @@ Thumbs.db
 # Logs
 *.log
 
+# Redis
+dump.rdb
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
 # Project specific
 .python-version
 BACKLOG.md
